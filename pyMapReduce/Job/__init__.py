@@ -9,11 +9,11 @@ class Job(metaclass=ABCMeta):
         self.master_port = port
 
     @abstractmethod
-    def map(self):
+    def map(self, key, value):
         raise UndefException('Map')
 
     @abstractmethod
-    def reduce(self):
+    def reduce(self, key, values: list):
         raise UndefException('Reduce')
 
     def run(self):
