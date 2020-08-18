@@ -1,9 +1,6 @@
 import socket
 import threading
 import socketserver
-import hashlib
-import inspect
-import sys
 import math
 import time
 import json
@@ -50,7 +47,7 @@ def _parse_code_to_func(source: str) -> FunctionType:
 
 def _connect(ip: str, port: int):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    # sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     sock.connect((ip, port))
 
     return sock
@@ -101,7 +98,7 @@ def _receive_and_decode_Msg(sock: socket.socket):
             body['reduceFunc'] = _get_body_content_one()
             body['file'] = json.loads(_get_body_content_one())
 
-        elif msg_type == _MsgType.MapTask_Res or msg_type == _MsgType.ReduceTask_Res:
+        elif msg_type == _MsgType.MapTask_Res or msg_type == _MsgType.ReduceTask_Res or msg_type == _MsgType.AllTask_Res:
             body['result'] = json.loads(_get_body_content_one())
 
     sock.setblocking(blocking_state)
@@ -149,17 +146,92 @@ def _make_req(msg_type: _MsgType, body: list, fingerprint: str = str()):
 class _ThreadedMasterTCPRequestHandler(socketserver.BaseRequestHandler):
 
     def handle(self):
-        msg_type, fingerprint, body = _receive_and_decode_Msg(self.request)
+        self.server._handle_request(self.request)
+        return
+
+
+class _ThreadedMasterTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    def __init__(self, address=('', 0)):
+        socketserver.ThreadingMixIn.__init__(self)
+        socketserver.TCPServer.__init__(self, address, _ThreadedMasterTCPRequestHandler)
+
+        self._slaves = dict()
+        self._socket_queue = Queue()
+        self._server_running = False
+        self._event_period = 5
+
+    def shutdown_request(self, request):
+        print(request)
+        pass
+
+    def _safe_sendall(self, sock: str, req: bytes, to_close=False):
+        self._socket_queue.put({
+            'sock': sock,
+            'req': req,
+            'to_close': to_close
+        })
+
+    def _threaded_sendall(self):
+        while True:
+            task = self._socket_queue.get()
+            task['sock'].sendall(task['req'])
+            if task['to_close']:
+                task['sock'].close()
+
+    def _periodical_event(self):
+        raise NotImplementedError('_periodical_event is not implemented')
+
+    def _handle_request(self, sock: socket.socket):
+        raise NotImplementedError('_handle_request is not implemented')
+
+    def run(self):
+        if self._server_running:
+            print('Master server has been started.')
+        else:
+            server_thread = threading.Thread(target=self.serve_forever)
+            server_thread.daemon = True
+            server_thread.start()
+            self._server_running = True
+
+            socket_send_thread = threading.Thread(target=self._threaded_sendall)
+            socket_send_thread.daemon = True
+            socket_send_thread.start()
+
+            print('Listen on', self.server_address)
+
+            while True:
+                self._periodical_event()
+                time.sleep(self._event_period)
+
+    def close(self):
+        if not self._server_running:
+            print('Master server has not been started.')
+        else:
+            self.shutdown()
+            self.server_close()
+            self._server_running = False
+
+
+class Master(_ThreadedMasterTCPServer):
+
+    def __init__(self):
+        _ThreadedMasterTCPServer.__init__(self, ('', 0))
+        self._server_running = False
+        self._tasks = dict()
+        self._tasks_lock = Lock()
+
+    def _handle_request(self, sock: socket.socket):
+        msg_type, fingerprint, body = _receive_and_decode_Msg(sock)
 
         if msg_type == _MsgType.AllTask:
-            if fingerprint in self.server._tasks:
-                # !!!!!!
+            if fingerprint in self._tasks:
                 print('Task', fingerprint, 'is running...')
                 return
 
-            distributed_tasks = self.server._distribute_tasks(body['file'])
-            self.server._tasks_lock.acquire()
-            self.server._tasks[fingerprint] = {
+            distributed_tasks = self._distribute_tasks(body['file'])
+            self._tasks_lock.acquire()
+            self._tasks[fingerprint] = {
+                'client': sock,
                 'map': {
                     'func': body['mapFunc'],
                     'file': json.dumps(body['file']),
@@ -169,34 +241,19 @@ class _ThreadedMasterTCPRequestHandler(socketserver.BaseRequestHandler):
                 'reduce': {
                     'func': body['reduceFunc'],
                     'running_sub_tasks': dict(),
-                    'result': []
+                    'result': {}
                 }
             }
-            self.server._tasks_lock.release()
+            self._tasks_lock.release()
 
             for s_id, file in distributed_tasks.items():
                 map_req = _make_req(_MsgType.MapTask, [body['mapFunc'], json.dumps(file)], fingerprint)
-                self.server._safe_sendall(self.server._slaves[s_id]['conn'], map_req)
+                self._safe_sendall(self._slaves[s_id]['conn'], map_req)
 
-
-class _ThreadedMasterTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    pass
-
-
-class Master(_ThreadedMasterTCPServer):
-
-    def __init__(self):
-        _ThreadedMasterTCPServer.__init__(self, ('', 0), _ThreadedMasterTCPRequestHandler)
-        self._socket_queue = Queue()
-        self._server_running = False
-        self._slaves = dict()
-        self._tasks = dict()
-        self._tasks_lock = Lock()
-
-    def _safe_sendall(self, sock: str, req: bytes):
-        self._socket_queue.put({
-            sock: req
-        })
+    def _periodical_event(self):
+        for slave_id, s in self._slaves.items():
+            all_msgs = _get_all_Msgs(s['conn'])
+            self._handle_Msgs(slave_id, all_msgs)
 
     def _distribute_tasks(self, file: list):
         print(file)
@@ -215,45 +272,55 @@ class Master(_ThreadedMasterTCPServer):
 
         return ret
 
-    def _threaded_sendall(self):
-        while True:
-            task = self._socket_queue.get()
-            for sock, req in task.items():
-                sock.sendall(req)
-
     def _handle_Msgs(self, slave_id, msgs):
+        def _gather_results(results: list):
+            aft_gathering = dict()
+            for pair in results:
+                for k, v in pair.items():
+                    if k not in aft_gathering:
+                        aft_gathering[k] = [v]
+                    else:
+                        aft_gathering[k].append(v)
+
+            ret = []
+            for k, v in aft_gathering.items():
+                ret.append({k: v})
+            return ret
+
         print(msgs)
         self._slaves[slave_id]['timeout_cnt'] += 1
         self._safe_sendall(self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
         for msg in msgs:
+            _fingerprint = msg['fingerprint']
             if msg['msg_type'] == _MsgType.HeartBeat_Res:
                 self._slaves[slave_id]['timeout_cnt'] = 0
                 self._slaves[slave_id]['alive'] = True
 
             elif msg['msg_type'] == _MsgType.MapTask_Res:
-                map_task_rec = self._tasks[msg['fingerprint']]['map']
+                map_task_rec = self._tasks[_fingerprint]['map']
                 map_task_rec['running_sub_tasks'].pop(slave_id)
                 map_task_rec['result'].extend(msg['body']['result'])
 
                 if len(map_task_rec['running_sub_tasks']) == 0:
-                    print('all', self._tasks[msg['fingerprint']])
-                    print('maptaskrec', map_task_rec)
-                    reduce_task_rec = self._tasks[msg['fingerprint']]['reduce']
-                    reduce_task_rec['running_sub_tasks'] = self._distribute_tasks(map_task_rec['result'])
+                    reduce_task_rec = self._tasks[_fingerprint]['reduce']
+                    aft_gathering = _gather_results(map_task_rec['result'])
+                    print(aft_gathering)
+                    reduce_task_rec['running_sub_tasks'] = self._distribute_tasks(aft_gathering)
 
                     for s_id, file in reduce_task_rec['running_sub_tasks'].items():
-                        reduce_req = _make_req(_MsgType.ReduceTask, [reduce_task_rec['func'], json.dumps(file)], msg['fingerprint'])
+                        reduce_req = _make_req(_MsgType.ReduceTask, [reduce_task_rec['func'], json.dumps(file)], _fingerprint)
                         self._safe_sendall(self._slaves[s_id]['conn'], reduce_req)
 
             elif msg['msg_type'] == _MsgType.ReduceTask_Res:
-                reduce_task_rec = self._tasks[msg['fingerprint']]['reduce']
+                reduce_task_rec = self._tasks[_fingerprint]['reduce']
                 reduce_task_rec['running_sub_tasks'].pop(slave_id)
-                reduce_task_rec['result'].extend(msg['body']['result'])
+                reduce_task_rec['result'].update(msg['body']['result'])
                 print(msg['body']['result'])
 
                 if len(reduce_task_rec['running_sub_tasks']) == 0:
-                    self._tasks.pop(msg['fingerprint'])
+                    self._safe_sendall(self._tasks[_fingerprint]['client'], _make_req(_MsgType.AllTask_Res, [json.dumps(reduce_task_rec['result'])], _fingerprint))
+                    self._tasks.pop(_fingerprint)
                     print('Final Result:', reduce_task_rec['result'])
 
         if self._slaves[slave_id]['timeout_cnt'] > 2:
@@ -274,36 +341,6 @@ class Master(_ThreadedMasterTCPServer):
 
             print('Successfully register slave', '"' + slave_id + '"')
 
-    def run(self):
-        if self._server_running:
-            print('Master server has been started.')
-        else:
-            server_thread = threading.Thread(target=self.serve_forever)
-            server_thread.daemon = True
-            server_thread.start()
-            self._server_running = True
-
-            socket_send_thread = threading.Thread(target=self._threaded_sendall)
-            socket_send_thread.daemon = True
-            socket_send_thread.start()
-
-            print('Listen on', self.server_address)
-
-            while True:
-                for slave_id, s in self._slaves.items():
-                    all_msgs = _get_all_Msgs(s['conn'])
-                    self._handle_Msgs(slave_id, all_msgs)
-
-                time.sleep(5)
-
-    def close(self):
-        if not self._server_running:
-            print('Master server has not been started.')
-        else:
-            self.shutdown()
-            self.server_close()
-            self._server_running = False
-
 
 class Slave:
 
@@ -315,14 +352,23 @@ class Slave:
         self._conn = socket.socket()
 
     def _handle_Msg(self, msg_type, fingerprint, body):
-        def handle_MapReduceTask():
-            func = _parse_code_to_func(body['mapFunc']) if msg_type == _MsgType.MapTask else _parse_code_to_func(body['reduceFunc'])
-
+        def handle_MapTask():
+            func = _parse_code_to_func(body['mapFunc'])
             res = []
             for pair in body['file']:
                 for k, v in pair.items():
                     res.extend(func(k, v))
+            self._job_results[fingerprint] = {
+                'result': res,
+                'msg_type': msg_type
+            }
 
+        def handle_ReduceTask():
+            func = _parse_code_to_func(body['reduceFunc'])
+            res = dict()
+            for pair in body['file']:
+                for k, v in pair.items():
+                    res[k] = func(k, v)
             self._job_results[fingerprint] = {
                 'result': res,
                 'msg_type': msg_type
@@ -331,33 +377,40 @@ class Slave:
         if msg_type == _MsgType.HeartBeat:
             self._conn.sendall(_make_req(_MsgType.HeartBeat_Res, [body['slave_id']]))
 
-        elif msg_type == _MsgType.MapTask or msg_type == _MsgType.ReduceTask:
-            map_process = Process(target=handle_MapReduceTask)
+        elif msg_type == _MsgType.MapTask:
+            map_process = Process(target=handle_MapTask)
             map_process.start()
             self._jobs[fingerprint] = map_process
+
+        elif msg_type == _MsgType.ReduceTask:
+            map_process = Process(target=handle_ReduceTask)
+            map_process.start()
+            self._jobs[fingerprint] = map_process
+
+    def _task_check(self):
+        finished_tasks = []
+        for _fingerprint, job in self._jobs.items():
+            if not job.is_alive():
+                finished_tasks.append(_fingerprint)
+                print(self._job_results[_fingerprint])
+                res = self._job_results[_fingerprint]
+                _msg_type = _MsgType.MapTask_Res if res['msg_type'] == _MsgType.MapTask else _MsgType.ReduceTask_Res
+                self._conn.sendall(_make_req(_msg_type, [json.dumps(res['result'])], _fingerprint))
+
+        for task in finished_tasks:
+            self._jobs.pop(task)
+            self._job_results.pop(task)
 
     def _handle(self):
         while True:
             try:
+                self._task_check()
                 msg_type, fingerprint, body = _receive_and_decode_Msg(self._conn)
             except BlockingIOError:
                 time.sleep(3)
                 continue
             print(msg_type, fingerprint, body)
             self._handle_Msg(msg_type, fingerprint, body)
-
-            finished_tasks = []
-            for _fingerprint, job in self._jobs.items():
-                if not job.is_alive():
-                    finished_tasks.append(_fingerprint)
-                    print(self._job_results[_fingerprint])
-                    res = self._job_results[_fingerprint]
-                    _msg_type = _MsgType.MapTask_Res if res['msg_type'] == _MsgType.MapTask else _MsgType.ReduceTask_Res
-                    self._conn.sendall(_make_req(_msg_type, [json.dumps(res['result'])], _fingerprint))
-
-            for task in finished_tasks:
-                self._jobs.pop(task)
-                self._job_results.pop(task)
 
     def run(self):
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -369,4 +422,3 @@ class Slave:
 
         self._conn = conn
         self._handle()
-
