@@ -38,7 +38,7 @@ def _parse_code_to_func(source: str) -> FunctionType:
     parsed_code = str()
     lines = source.splitlines(False)
 
-    def_line = lines[0].replace('(self', '(', 1)
+    def_line = lines[0].replace('self', '', 1).replace(',', '', 1)
     stripped_def_line = def_line.lstrip()
     lines.pop(0)
     indent = len(def_line) - len(stripped_def_line)
@@ -48,6 +48,8 @@ def _parse_code_to_func(source: str) -> FunctionType:
         stripped_line = line.rstrip()
         if len(stripped_line) != 0:
             parsed_code += stripped_line[indent:] + '\n'
+
+    print(parsed_code)
 
     code_bytes = compile(parsed_code, '<string>', 'exec')
 
