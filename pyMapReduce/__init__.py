@@ -316,8 +316,6 @@ class Master(_ThreadedMasterServer):
         for i in range(0, len(alive_slaves) - 1):
             ret[alive_slaves[i]] = file[i*len_each:(i+1)*len_each]
 
-        ret[alive_slaves[len(alive_slaves)-1]] = file[(len(alive_slaves)-1)*len_each:]
-        print('distributed', ret)
 
         return ret
 
