@@ -49,8 +49,6 @@ def _parse_code_to_func(source: str) -> FunctionType:
         if len(stripped_line) != 0:
             parsed_code += stripped_line[indent:] + '\n'
 
-    print(parsed_code)
-
     code_bytes = compile(parsed_code, '<string>', 'exec')
 
     return FunctionType(code_bytes.co_consts[0], {'__builtins__': __builtins__})
@@ -237,8 +235,6 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             socket_send_thread.daemon = True
             socket_send_thread.start()
 
-            print('Listen on', self.server_address)
-
             while True:
                 self._periodical_event()
                 time.sleep(self._event_period)
@@ -255,7 +251,6 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
 
 
 class Master(_ThreadedMasterServer):
-    """  """
 
     def __init__(self, port=0):
         _ThreadedMasterServer.__init__(self, ('', port))
@@ -305,6 +300,7 @@ class Master(_ThreadedMasterServer):
         # Get messages from all connections with Slaves and process them
         for slave_id, s in self._slaves.items():
             all_msgs = _get_all_Msgs(s['conn'])
+            print('Master receive messages from slave', slave_id, ':', all_msgs)
             self._handle_Msgs(slave_id, all_msgs)
 
     def _distribute_tasks(self, file: list):
@@ -342,7 +338,6 @@ class Master(_ThreadedMasterServer):
                 ret.append({k: v})
             return ret
 
-        print(msgs)
         self._slaves[slave_id]['timeout_cnt'] += 1
         self._safe_sendall(self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
@@ -380,12 +375,15 @@ class Master(_ThreadedMasterServer):
                 if len(reduce_task_rec['running_sub_tasks']) == 0:
                     self._safe_sendall(self._tasks[_fingerprint]['client'], _make_req(_MsgType.AllTask_Res, [json.dumps(reduce_task_rec['result'])], _fingerprint), True)
                     self._tasks.pop(_fingerprint)
-                    print(_fingerprint, 'Final Result:', reduce_task_rec['result'])
 
         # Check timeout
         if self._slaves[slave_id]['timeout_cnt'] > 3:
             self._slaves[slave_id]['alive'] = False
             print(slave_id, 'is down.')
+
+    def run(self):
+        print('Master Listen on', self.server_address)
+        _ThreadedMasterServer.run(self)
 
     def register_slave(self, slave_id: str, slave_ip: str, slave_port: int):
         """ Register a slave """
@@ -399,6 +397,7 @@ class Master(_ThreadedMasterServer):
                 'alive': True,
                 'timeout_cnt': 0
             }
+            self._safe_sendall(self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
             print('Successfully register slave', '"' + slave_id + '"')
 
@@ -412,6 +411,7 @@ class Slave:
         self._manager = Manager()
         self._job_results = self._manager.dict()        # Shared dict for workers
         self._conn = socket.socket()                    # Connection with Master
+        self._slave_id = 'Slave ?'                      # Slave_id passed from HeartBeat, default 'Slave ?'
 
     def _handle_Msg(self, msg_type, fingerprint, body):
         """ Process a message """
@@ -420,8 +420,10 @@ class Slave:
             func = _parse_code_to_func(body['mapFunc'])
             res = []
             if inspect.isgeneratorfunction(func):
-                for k, v in func(body['file']):
-                    res.append({k, v})
+                for pair in body['file']:
+                    for k, v in pair.items():
+                        for yield_k, yield_v in func(k, v):
+                            res.append({yield_k: yield_v})
             else:
                 for pair in body['file']:
                     for k, v in pair.items():
@@ -447,6 +449,7 @@ class Slave:
 
         # HeartBeat: Send HeartBeat_Res to Master
         if msg_type == _MsgType.HeartBeat:
+            self._slave_id = body['slave_id']
             self._conn.sendall(_make_req(_MsgType.HeartBeat_Res, [body['slave_id']]))
 
         # MapTask: Start a worker process to execute Map Task
@@ -487,8 +490,8 @@ class Slave:
             except BlockingIOError:
                 time.sleep(5)
                 continue
-            print(msg_type, fingerprint, body)
             self._handle_Msg(msg_type, fingerprint, body)
+            print(self._slave_id, 'receive message:', msg_type, fingerprint, body)
 
     def run(self):
         """ Start the slave """
@@ -496,7 +499,7 @@ class Slave:
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.bind(('', self._port))
         server.listen(1)
-        print('Listen on', server.getsockname())
+        print('Slave Listen on', server.getsockname())
         conn, address = server.accept()
         conn.setblocking(False)
 
@@ -515,7 +518,7 @@ class Job:
 
         raise NotImplementedError('Map function is not implemented.')
 
-    def reduce(self, key, values: list):
+    def reduce(self, key, values):
         """ Reduce function (override) """
 
         raise NotImplementedError('Reduce function is not implemented.')
