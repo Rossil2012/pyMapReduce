@@ -433,16 +433,10 @@ class Slave:
         def handle_ReduceTask():
             func = _parse_code_to_func(body['reduceFunc'])
             res = dict()
-            is_generator = inspect.isgeneratorfunction(func)
 
             for pair in body['file']:
                 for k, v in pair.items():
-                    if is_generator:
-                        res[k] = []
-                        for item in func(k, v):
-                            res[k].append(item)
-                    else:
-                        res[k] = func(k, v)
+                    res[k] = func(k, v)
 
             self._job_results[fingerprint] = {
                 'result': res,
