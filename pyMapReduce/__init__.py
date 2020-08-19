@@ -417,9 +417,14 @@ class Slave:
         def handle_MapTask():
             func = _parse_code_to_func(body['mapFunc'])
             res = []
-            for pair in body['file']:
-                for k, v in pair.items():
-                    res.extend(func(k, v))
+            if inspect.isgeneratorfunction(func):
+                for k, v in func(body['file']):
+                    res.append({k, v})
+            else:
+                for pair in body['file']:
+                    for k, v in pair.items():
+                        res.extend(func(k, v))
+
             self._job_results[fingerprint] = {
                 'result': res,
                 'msg_type': msg_type
@@ -428,9 +433,17 @@ class Slave:
         def handle_ReduceTask():
             func = _parse_code_to_func(body['reduceFunc'])
             res = dict()
+            is_generator = inspect.isgeneratorfunction(func)
+
             for pair in body['file']:
                 for k, v in pair.items():
-                    res[k] = func(k, v)
+                    if is_generator:
+                        res[k] = []
+                        for item in func(k, v):
+                            res[k].append(item)
+                    else:
+                        res[k] = func(k, v)
+
             self._job_results[fingerprint] = {
                 'result': res,
                 'msg_type': msg_type
