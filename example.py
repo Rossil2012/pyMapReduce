@@ -1,16 +1,3 @@
-# pyMapReduce
-A lightweight distributed MapReduce implementation on Python.
-
-## Feature
-
-1. **Distributed.** Master, slave and client can run on different machines
-2. **Muti-Tasks Supported.** Tasks can be executed simultaneously.
-
-## Example
-
-This is a character counting example testing on localhost.
-
-```python
 from pyMapReduce import Master, Slave, Job
 from threading import Thread
 import time
@@ -69,9 +56,3 @@ class CountCharacters(Job):
 
 job = CountCharacters()
 job.run()
-```
-
-## To be Implemented
-
-- [ ] Server fault tolerance
-- [ ] Effective and flexible task scheduling
