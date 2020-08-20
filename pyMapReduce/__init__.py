@@ -323,8 +323,6 @@ class Master(_ThreadedMasterServer):
         i = len(alive_slaves) - 1
         ret[alive_slaves[i]] = file[i*len_each:]
 
-        print('ret', ret)
-
         return ret
 
     def _handle_Msgs(self, slave_id, msgs):

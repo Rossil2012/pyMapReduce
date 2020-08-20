@@ -47,16 +47,8 @@ class CountCharacters(Job):
         ]
 
     def map(self, key, value):
-        statistics = dict()
         for char in value:
-            if char != ' ':
-                if char not in statistics:
-                    statistics[char] = 1
-                else:
-                    statistics[char] += 1
-
-        for k, v in statistics.items():
-            yield k, v
+            yield char, 1
 
     def reduce(self, key, values):
         return sum(values)
