@@ -5,10 +5,11 @@ import socket
 import hashlib
 import logging
 import inspect
-import threading
+import platform
 import socketserver
 from enum import Enum
 from queue import Queue
+from threading import Thread
 from types import FunctionType
 from multiprocessing import Lock, Process, Manager
 
@@ -233,12 +234,12 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         if self._server_running:
             logging.info('Master server has been started.')
         else:
-            server_thread = threading.Thread(target=self.serve_forever)
+            server_thread = Thread(target=self.serve_forever)
             server_thread.daemon = True
             server_thread.start()
             self._server_running = True
 
-            socket_send_thread = threading.Thread(target=self._threaded_sendall)
+            socket_send_thread = Thread(target=self._threaded_sendall)
             socket_send_thread.daemon = True
             socket_send_thread.start()
 
@@ -463,10 +464,16 @@ class Slave:
             self._conn.sendall(_make_req(_MsgType.HeartBeat_Res, [body['slave_id']]))
 
         # MapTask: Start a worker process to execute Map Task
-        elif msg_type == _MsgType.MapTask:
-            map_process = Process(target=handle_MapTask)
-            map_process.start()
-            self._jobs[fingerprint] = map_process
+        elif msg_type == _MsgType.MapTask or msg_type == _MsgType.ReduceTask:
+            worker_func = handle_MapTask if msg_type == _MsgType.MapTas else handle_ReduceTask
+
+            # Socket cannot be pickled when using multi-process in Windows, thus using thread instead.
+            # In unix-like systems fork is used to create a new process and avoid the problem, so I use process to
+            #   improve performance.
+            worker = Thread(target=worker_func) if platform.system().lower() == 'windows' else Process(target=worker_func)
+
+            worker.start()
+            self._jobs[fingerprint] = worker
 
         # ReduceTask: Start a worker process to execute Reduce Task
         elif msg_type == _MsgType.ReduceTask:
