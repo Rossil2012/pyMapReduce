@@ -239,7 +239,7 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
             socket_send_thread.daemon = True
             socket_send_thread.start()
 
-            while True:
+            while self._server_running:
                 self._periodical_event()
                 time.sleep(self._event_period)
 
@@ -388,7 +388,7 @@ class Master(_ThreadedMasterServer):
             print(slave_id, 'is down.')
 
     def run(self):
-        """ Run Master """
+        """ Start the Master """
 
         print('Master Listen on', self.server_address)
         _ThreadedMasterServer.run(self)
@@ -413,6 +413,7 @@ class Master(_ThreadedMasterServer):
 class Slave:
 
     def __init__(self, port=0):
+        self._server_running = False                    # Whether the slave is running
         self._port = port                               # Default port, 0 means distributed by system
         self._tasks = dict()                            # All running tasks
         self._jobs = dict()                             # All running worker processes
@@ -491,7 +492,7 @@ class Slave:
     def _handle(self):
         """ Periodical event """
 
-        while True:
+        while self._server_running:
             try:
                 self._task_check()
                 msg_type, fingerprint, body = _receive_and_decode_Msg(self._conn)
@@ -504,15 +505,27 @@ class Slave:
     def run(self):
         """ Start the slave """
 
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.bind(('', self._port))
-        server.listen(1)
-        print('Slave Listen on', server.getsockname())
-        conn, address = server.accept()
-        conn.setblocking(False)
+        if self._server_running:
+            print('Slave has been started.')
+        else:
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.bind(('', self._port))
+            server.listen(1)
+            print('Slave Listen on', server.getsockname())
+            conn, address = server.accept()
+            conn.setblocking(False)
 
-        self._conn = conn
-        self._handle()
+            self._conn = conn
+            self._server_running = True
+            self._handle()
+
+    def close(self):
+        """ Close the Slave """
+
+        if not self._server_running:
+            print('Slave has not been started.')
+        else:
+            self._server_running = False
 
 
 class Job:
