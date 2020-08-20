@@ -191,10 +191,11 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
 
         pass
 
-    def _safe_sendall(self, sock: str, req: bytes, to_close=False):
+    def _safe_sendall(self, server_id: str, sock: str, req: bytes, to_close=False):
         """ Enqueue the requests to avoid races of sockets """
 
         self._socket_queue.put({
+            'server_id': server_id,
             'sock': sock,
             'req': req,
             'to_close': to_close
@@ -205,9 +206,13 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
 
         while True:
             task = self._socket_queue.get()
-            task['sock'].sendall(task['req'])
-            if task['to_close']:
-                task['sock'].close()
+            try:
+                task['sock'].sendall(task['req'])
+                if task['to_close']:
+                    task['sock'].close()
+            except socket.error as e:
+                print('Send to', task['server_id'], 'error:', e)
+                continue
 
     def _periodical_event(self):
         """ The event to be executed periodically (override) """
@@ -291,7 +296,7 @@ class Master(_ThreadedMasterServer):
             # Assign Map Task to Slaves
             for s_id, file in distributed_tasks.items():
                 map_req = _make_req(_MsgType.MapTask, [body['mapFunc'], json.dumps(file)], fingerprint)
-                self._safe_sendall(self._slaves[s_id]['conn'], map_req)
+                self._safe_sendall(s_id, self._slaves[s_id]['conn'], map_req)
 
     def _periodical_event(self):
         """ Override _ThreadedMasterServer._periodical_event """
@@ -340,7 +345,7 @@ class Master(_ThreadedMasterServer):
             return ret
 
         self._slaves[slave_id]['timeout_cnt'] += 1
-        self._safe_sendall(self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
+        self._safe_sendall(slave_id, self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
         for msg in msgs:
             _fingerprint = msg['fingerprint']
@@ -364,7 +369,7 @@ class Master(_ThreadedMasterServer):
 
                     for s_id, file in reduce_task_rec['running_sub_tasks'].items():
                         reduce_req = _make_req(_MsgType.ReduceTask, [reduce_task_rec['func'], json.dumps(file)], _fingerprint)
-                        self._safe_sendall(self._slaves[s_id]['conn'], reduce_req)
+                        self._safe_sendall(s_id, self._slaves[s_id]['conn'], reduce_req)
 
             # ReduceTask_Res: One Reduce sub_task is finished
             elif msg['msg_type'] == _MsgType.ReduceTask_Res:
@@ -374,7 +379,7 @@ class Master(_ThreadedMasterServer):
 
                 # All sub_tasks are finished, print and send result to client
                 if len(reduce_task_rec['running_sub_tasks']) == 0:
-                    self._safe_sendall(self._tasks[_fingerprint]['client'], _make_req(_MsgType.AllTask_Res, [json.dumps(reduce_task_rec['result'])], _fingerprint), True)
+                    self._safe_sendall('client', self._tasks[_fingerprint]['client'], _make_req(_MsgType.AllTask_Res, [json.dumps(reduce_task_rec['result'])], _fingerprint), True)
                     self._tasks.pop(_fingerprint)
 
         # Check timeout
@@ -383,6 +388,8 @@ class Master(_ThreadedMasterServer):
             print(slave_id, 'is down.')
 
     def run(self):
+        """ Run Master """
+
         print('Master Listen on', self.server_address)
         _ThreadedMasterServer.run(self)
 
@@ -398,7 +405,7 @@ class Master(_ThreadedMasterServer):
                 'alive': True,
                 'timeout_cnt': 0
             }
-            self._safe_sendall(self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
+            self._safe_sendall(slave_id, self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
             print('Successfully register slave', '"' + slave_id + '"')
 
