@@ -465,7 +465,7 @@ class Slave:
 
         # MapTask & ReduceTask: Start a worker process/thread to execute the task
         elif msg_type == _MsgType.MapTask or msg_type == _MsgType.ReduceTask:
-            worker_func = handle_MapTask if msg_type == _MsgType.MapTas else handle_ReduceTask
+            worker_func = handle_MapTask if msg_type == _MsgType.MapTask else handle_ReduceTask
 
             # Socket cannot be pickled when using multi-process in Windows, thus using thread instead.
             # In unix-like systems fork is used to create a new process and avoid the problem, so I use process to
