@@ -264,7 +264,7 @@ class Master(_ThreadedMasterServer):
     def _handle_request(self, sock: socket.socket):
         """
         Override _ThreadedMasterServer._handle_request
-        This method may be called by many processes spontaneously
+        This method may be called by many processes simultaneously
         """
 
         msg_type, fingerprint, body = _receive_and_decode_Msg(sock)
