@@ -560,4 +560,4 @@ class Job:
         conn.sendall(req)
         msg_type, fingerprint, body = _receive_and_decode_Msg(conn)
 
-        print(fingerprint, 'Final Result:', body['result'])
+        return body['result']
