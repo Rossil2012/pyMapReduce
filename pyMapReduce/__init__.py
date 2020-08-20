@@ -500,8 +500,9 @@ class Slave:
             except BlockingIOError:
                 time.sleep(5)
                 continue
+
             self._handle_Msg(msg_type, fingerprint, body)
-            logging.debug(self._slave_id + ' receive message: ' + str(msg_type) + ' ' + (fingerprint + ' ') if fingerprint is not None else '' + str(body))
+            logging.debug(self._slave_id + ' receive message: ' + str(msg_type) + ' ' + ((fingerprint + ' ') if fingerprint is not None else '') + str(body))
 
     def run(self):
         """ Start the slave """
