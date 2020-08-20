@@ -3,6 +3,7 @@ import time
 import json
 import socket
 import hashlib
+import logging
 import inspect
 import threading
 import socketserver
@@ -10,6 +11,8 @@ from enum import Enum
 from queue import Queue
 from types import FunctionType
 from multiprocessing import Lock, Process, Manager
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s')
 
 
 class _MsgType(Enum):
@@ -211,7 +214,7 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
                 if task['to_close']:
                     task['sock'].close()
             except socket.error as e:
-                print('Send to', task['server_id'], 'error:', e)
+                logging.error('Master send to ' + task['server_id'] + ' error: ' + str(e))
                 continue
 
     def _periodical_event(self):
@@ -228,7 +231,7 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         """ Start the server """
 
         if self._server_running:
-            print('Master server has been started.')
+            logging.info('Master server has been started.')
         else:
             server_thread = threading.Thread(target=self.serve_forever)
             server_thread.daemon = True
@@ -247,7 +250,7 @@ class _ThreadedMasterServer(socketserver.ThreadingMixIn, socketserver.TCPServer)
         """ Close the server """
 
         if not self._server_running:
-            print('Master server has not been started.')
+            logging.info('Master server has not been started.')
         else:
             self.shutdown()
             self.server_close()
@@ -271,7 +274,7 @@ class Master(_ThreadedMasterServer):
 
         if msg_type == _MsgType.AllTask:
             if fingerprint in self._tasks:
-                print('Task', fingerprint, 'is running...')
+                logging.info('Task ' + fingerprint + ' is running...')
                 return
 
             # Record the task
@@ -304,7 +307,7 @@ class Master(_ThreadedMasterServer):
         # Get messages from all connections with Slaves and process them
         for slave_id, s in self._slaves.items():
             all_msgs = _get_all_Msgs(s['conn'])
-            print('Master receive messages from slave', slave_id, ':', all_msgs)
+            logging.debug('Master receive messages from slave ' + slave_id + ' : ' + str(all_msgs))
             self._handle_Msgs(slave_id, all_msgs)
 
     def _distribute_tasks(self, file: list):
@@ -383,19 +386,19 @@ class Master(_ThreadedMasterServer):
         # Check timeout
         if self._slaves[slave_id]['timeout_cnt'] > 3:
             self._slaves[slave_id]['alive'] = False
-            print(slave_id, 'is down.')
+            logging.info(slave_id + ' is down.')
 
     def run(self):
         """ Start the Master """
 
-        print('Master Listen on', self.server_address)
+        logging.info('Master Listen on ' + str(self.server_address))
         _ThreadedMasterServer.run(self)
 
     def register_slave(self, slave_id: str, slave_ip: str, slave_port: int):
         """ Register a slave """
 
         if slave_id in self._slaves:
-            print('Slave', '"' + slave_id + '"', 'already exists')
+            logging.info('Slave ' + '"' + slave_id + '"' + ' already exists')
         else:
             conn = _connect(slave_ip, slave_port)
             self._slaves[slave_id] = {
@@ -405,7 +408,7 @@ class Master(_ThreadedMasterServer):
             }
             self._safe_sendall(slave_id, self._slaves[slave_id]['conn'], _make_req(_MsgType.HeartBeat, [slave_id]))
 
-            print('Successfully register slave', '"' + slave_id + '"')
+            logging.info('Successfully register slave ' + '"' + slave_id + '"')
 
 
 class Slave:
@@ -478,7 +481,7 @@ class Slave:
         for _fingerprint, job in self._jobs.items():
             if not job.is_alive():
                 finished_tasks.append(_fingerprint)
-                print(self._job_results[_fingerprint])
+                logging.debug(self._slave_id + ' finishes task ' + _fingerprint + str(self._job_results[_fingerprint]))
                 res = self._job_results[_fingerprint]
                 _msg_type = _MsgType.MapTask_Res if res['msg_type'] == _MsgType.MapTask else _MsgType.ReduceTask_Res
                 self._conn.sendall(_make_req(_msg_type, [json.dumps(res['result'])], _fingerprint))
@@ -498,18 +501,18 @@ class Slave:
                 time.sleep(5)
                 continue
             self._handle_Msg(msg_type, fingerprint, body)
-            print(self._slave_id, 'receive message:', msg_type, fingerprint, body)
+            logging.debug(self._slave_id + ' receive message: ' + str(msg_type) + ' ' + (fingerprint + ' ') if fingerprint is not None else '' + str(body))
 
     def run(self):
         """ Start the slave """
 
         if self._server_running:
-            print('Slave has been started.')
+            logging.info('Slave has been started.')
         else:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.bind(('', self._port))
             server.listen(1)
-            print('Slave Listen on', server.getsockname())
+            logging.info('Slave Listen on ' + str(server.getsockname()))
             conn, address = server.accept()
             conn.setblocking(False)
 
@@ -521,7 +524,7 @@ class Slave:
         """ Close the Slave """
 
         if not self._server_running:
-            print('Slave has not been started.')
+            logging.info('Slave has not been started.')
         else:
             self._server_running = False
 
