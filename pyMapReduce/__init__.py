@@ -1,13 +1,13 @@
-import socket
-import inspect
-import threading
-import socketserver
-import hashlib
 import math
 import time
 import json
-from queue import Queue
+import socket
+import hashlib
+import inspect
+import threading
+import socketserver
 from enum import Enum
+from queue import Queue
 from types import FunctionType
 from multiprocessing import Lock, Process, Manager
 
@@ -58,7 +58,6 @@ def _connect(ip: str, port: int):
     """ Connect to (ip, port) and return socket """
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
     sock.connect((ip, port))
 
     return sock
@@ -316,6 +315,10 @@ class Master(_ThreadedMasterServer):
         for i in range(0, len(alive_slaves) - 1):
             ret[alive_slaves[i]] = file[i*len_each:(i+1)*len_each]
 
+        i = len(alive_slaves) - 1
+        ret[alive_slaves[i]] = file[i*len_each:]
+
+        print('ret', ret)
 
         return ret
 
@@ -506,6 +509,7 @@ class Slave:
 
 
 class Job:
+
     def __init__(self, url: str, port: int):
         self.File = None            # Should be override
         self.master_url = url
