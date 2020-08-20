@@ -3,7 +3,7 @@ A lightweight distributed MapReduce implementation on Python.
 
 ## Feature
 
-1. **Distributed.** Master, slave and client can run on different machines
+1. **Distributed.** Master, slave and client can run on different machines.
 2. **Muti-Tasks Supported.** Tasks can be executed simultaneously.
 
 ## Example
@@ -68,7 +68,12 @@ class CountCharacters(Job):
 
 
 job = CountCharacters()
-job.run()
+res = job.run()
+print('The result of CountCharacters:', res)
+```
+
+```json
+The result of CountCharacters: {'M': 12, 'a': 149, 'p': 53, 'R': 11, 'e': 198, 'd': 64, 'u': 61, 'c': 54, ' ': 265, 'i': 97, 'm': 54, 'l': 52, 'n': 89, 't': 122, 'w': 12, 'h': 47, 'P': 4, 'y': 32, 'o': 81, 'T': 6, 's': 108, 'k': 12, 'g': 26, 'r': 83, 'f': 25, '.': 12, 'U': 1, '/': 5, 'v': 9, ',': 8, 'x': 6, 'b': 10, 'z': 2, '’': 2, 'q': 1, 'O': 1, ':': 3, 'j': 1, 'G': 1, 'I': 1}
 ```
 
 ## To be Implemented
