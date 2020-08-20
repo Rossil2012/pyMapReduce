@@ -463,7 +463,7 @@ class Slave:
             self._slave_id = body['slave_id']
             self._conn.sendall(_make_req(_MsgType.HeartBeat_Res, [body['slave_id']]))
 
-        # MapTask: Start a worker process to execute Map Task
+        # MapTask & ReduceTask: Start a worker process/thread to execute the task
         elif msg_type == _MsgType.MapTask or msg_type == _MsgType.ReduceTask:
             worker_func = handle_MapTask if msg_type == _MsgType.MapTas else handle_ReduceTask
 
@@ -474,12 +474,6 @@ class Slave:
 
             worker.start()
             self._jobs[fingerprint] = worker
-
-        # ReduceTask: Start a worker process to execute Reduce Task
-        elif msg_type == _MsgType.ReduceTask:
-            map_process = Process(target=handle_ReduceTask)
-            map_process.start()
-            self._jobs[fingerprint] = map_process
 
     def _task_check(self):
         """ Check whether there are finished tasks """
