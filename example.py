@@ -55,4 +55,5 @@ class CountCharacters(Job):
 
 
 job = CountCharacters()
-job.run()
+res = job.run()
+print('The result of CountCharacters:', res)
