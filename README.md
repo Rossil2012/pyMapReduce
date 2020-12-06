@@ -80,3 +80,4 @@ The result of CountCharacters: {'M': 12, 'a': 149, 'p': 53, 'R': 11, 'e': 198, '
 
 - [ ] Server fault tolerance
 - [ ] Effective and flexible task scheduling
+- [ ] Authentication
